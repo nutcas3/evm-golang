@@ -1,10 +1,12 @@
 package main
 
 import (
+	"crypto/sha256"
+	"errors"
 	"fmt"
 	"math/big"
-	"crypto/sha256"
 )
+
 const (
 	MaxStackDepth = 1024
 	MaxMemorySize = 1 << 25 // 32 MB
@@ -21,8 +23,8 @@ const (
 
 // Value represents a typed value in the EVM
 type Value struct {
-	Type  DataType
-	Value *big.Int
+	Type DataType
+	Value interface{}
 }
 
 // Stack represents the EVM stack
@@ -193,7 +195,16 @@ func (evm *EVM) binaryOperation(op func(*big.Int, *big.Int) *big.Int, gasCost ui
 	if err != nil {
 		return err
 	}
-	result := op(a.Value, b.Value)
+
+	aValue, ok := a.Value.(*big.Int)
+	if !ok {
+		return errors.New("compareOperation assertion failed")
+	}
+	bValue, ok := b.Value.(*big.Int)
+	if !ok {
+		return errors.New("compareOperation assertion failed")
+	}
+	result := op(aValue, bValue)
 	return evm.stack.push(&Value{Type: Uint256, Value: result})
 }
 
@@ -209,7 +220,15 @@ func (evm *EVM) compareOperation(op func(*big.Int, *big.Int) bool, gasCost uint6
 	if err != nil {
 		return err
 	}
-	result := op(a.Value, b.Value)
+	aValue, ok := a.Value.(*big.Int)
+	if !ok {
+		return errors.New("compareOperation assertion failed")
+	}
+	bValue, ok := b.Value.(*big.Int)
+	if !ok {
+		return errors.New("compareOperation assertion failed")
+	}
+	result := op(aValue, bValue)
 	if result {
 		return evm.stack.push(&Value{Type: Uint256, Value: big.NewInt(1)})
 	}
@@ -224,7 +243,12 @@ func (evm *EVM) sload(gasCost uint64) error {
 	if err != nil {
 		return err
 	}
-	value := evm.contract.Storage[key.Value.String()]
+
+	keyValue, ok := key.Value.(*big.Int)
+	if !ok {
+		return errors.New("compareOperation assertion failed")
+	}
+	value := evm.contract.Storage[keyValue.String()]
 	if value == nil {
 		value = &Value{Type: Uint256, Value: big.NewInt(0)}
 	}
@@ -243,7 +267,11 @@ func (evm *EVM) sstore(gasCost uint64) error {
 	if err != nil {
 		return err
 	}
-	evm.contract.Storage[key.Value.String()] = value
+	keyValue, ok := key.Value.(*big.Int)
+	if !ok {
+		return errors.New("compareOperation assertion failed")
+	}
+	evm.contract.Storage[keyValue.String()] = value
 	return nil
 }
 
@@ -255,7 +283,12 @@ func (evm *EVM) jump(gasCost uint64) error {
 	if err != nil {
 		return err
 	}
-	evm.pc = dest.Value.Uint64() - 1 // -1 because pc will be incremented after this
+
+	destValue, ok := dest.Value.(*big.Int)
+	if !ok {
+		return errors.New("compareOperation assertion failed")
+	}
+	evm.pc = destValue.Uint64() - 1 // -1 because pc will be incremented after this
 	return nil
 }
 
@@ -271,8 +304,16 @@ func (evm *EVM) jumpi(gasCost uint64) error {
 	if err != nil {
 		return err
 	}
-	if condition.Value.Sign() != 0 {
-		evm.pc = dest.Value.Uint64() - 1 // -1 because pc will be incremented after this
+	cValue, ok := condition.Value.(*big.Int)
+	if !ok {
+		return errors.New("compareOperation assertion failed")
+	}
+	destValue, ok := dest.Value.(*big.Int)
+	if !ok {
+		return errors.New("compareOperation assertion failed")
+	}
+	if cValue.Sign() != 0 {
+		evm.pc = destValue.Uint64() - 1 // -1 because pc will be incremented after this
 	}
 	return nil
 }
@@ -306,8 +347,7 @@ func (evm *EVM) swap(pos uint64, gasCost uint64) error {
 	if uint64(len(evm.stack.data)) <= pos {
 		return fmt.Errorf("swap: stack underflow")
 	}
-	evm.stack.data[uint64(len(evm.stack.data))-1], evm.stack.data[uint64(len(evm.stack.data))-1-pos] =
-		evm.stack.data[uint64(len(evm.stack.data))-1-pos], evm.stack.data[uint64(len(evm.stack.data))-1]
+	evm.stack.data[uint64(len(evm.stack.data))-1], evm.stack.data[uint64(len(evm.stack.data))-1-pos] = evm.stack.data[uint64(len(evm.stack.data))-1-pos], evm.stack.data[uint64(len(evm.stack.data))-1]
 	return nil
 }
 
@@ -323,7 +363,16 @@ func (evm *EVM) log(topicCount uint64, gasCost uint64) error {
 	if err != nil {
 		return err
 	}
-	data, err := evm.memory.load(offset.Value.Uint64(), size.Value.Uint64())
+
+	offsetValue, ok := offset.Value.(*big.Int)
+	if !ok {
+		return errors.New("compareOperation assertion failed")
+	}
+	sizeValue, ok := size.Value.(*big.Int)
+	if !ok {
+		return errors.New("compareOperation assertion failed")
+	}
+	data, err := evm.memory.load(offsetValue.Uint64(), sizeValue.Uint64())
 	if err != nil {
 		return err
 	}
@@ -333,7 +382,11 @@ func (evm *EVM) log(topicCount uint64, gasCost uint64) error {
 		if err != nil {
 			return err
 		}
-		copy(topics[i][:], topic.Value.Bytes())
+		topicValue, ok := topic.Value.(*big.Int)
+		if !ok {
+			return errors.New("compareOperation assertion failed")
+		}
+		copy(topics[i][:], topicValue.Bytes())
 	}
 	log := Log{
 		Address: evm.contract.Address,
@@ -356,11 +409,20 @@ func (evm *EVM) create(gasCost uint64) error {
 	if err != nil {
 		return err
 	}
-	value, err := evm.stack.pop()
+	_, err = evm.stack.pop()
 	if err != nil {
 		return err
 	}
-	code, err := evm.memory.load(offset.Value.Uint64(), size.Value.Uint64())
+
+	offsetValue, ok := offset.Value.(*big.Int)
+	if !ok {
+		return errors.New("compareOperation assertion failed")
+	}
+	sizeValue, ok := size.Value.(*big.Int)
+	if !ok {
+		return errors.New("compareOperation assertion failed")
+	}
+	code, err := evm.memory.load(offsetValue.Uint64(), sizeValue.Uint64())
 	if err != nil {
 		return err
 	}
@@ -374,7 +436,7 @@ func (evm *EVM) create(gasCost uint64) error {
 	return evm.stack.push(&Value{Type: Address, Value: new(big.Int).SetBytes(address[:])})
 }
 
- func (evm *EVM) call(gasCost uint64) error {
+func (evm *EVM) call(gasCost uint64) error {
 	if err := evm.useGas(gasCost); err != nil {
 		return err
 	}
@@ -395,7 +457,7 @@ func (evm *EVM) create(gasCost uint64) error {
 	if err != nil {
 		return err
 	}
-	value, err := evm.stack.pop()
+	_, err = evm.stack.pop()
 	if err != nil {
 		return err
 	}
@@ -403,18 +465,26 @@ func (evm *EVM) create(gasCost uint64) error {
 	if err != nil {
 		return err
 	}
+	_, err = evm.stack.pop()
 	gasLimit, err := evm.stack.pop()
 	if err != nil {
 		return err
 	}
 
+	argsOffsetValue, ok := argsOffset.Value.(*big.Int)
+	if !ok {
+		return errors.New("compareOperation assertion failed")
+	}
+	argsSizeValue, ok := argsSize.Value.(*big.Int)
+	if !ok {
+		return errors.New("compareOperation assertion failed")
+	}
 	// Load call data from memory
-	args, err := evm.memory.load(argsOffset.Value.Uint64(), argsSize.Value.Uint64())
+	_, err = evm.memory.load(argsOffsetValue.Uint64(), argsSizeValue.Uint64())
 	if err != nil {
 		return err
 	}
 
-	// Get the contract to call
 	// Get the contract to call
 	var contract *Contract
 	if addr, ok := address.Value.(*big.Int); ok {
@@ -422,8 +492,14 @@ func (evm *EVM) create(gasCost uint64) error {
 		copy(contractAddress[:], addr.Bytes())
 		contract = evm.contracts[contractAddress]
 	}
+
 	if contract == nil {
 		return fmt.Errorf("contract not found")
+	}
+
+	gasLimitValue, ok := gasLimit.Value.(*big.Int)
+	if !ok {
+		return errors.New("compareOperation assertion failed")
 	}
 
 	// Execute the code of the called contract
@@ -432,7 +508,7 @@ func (evm *EVM) create(gasCost uint64) error {
 		memory:    &Memory{},
 		contract:  contract,
 		pc:        0,
-		gas:       gasLimit.Uint64(),
+		gas:       gasLimitValue.Uint64(),
 		context:   evm.context,
 		contracts: evm.contracts,
 		depth:     evm.depth + 1,
@@ -446,8 +522,16 @@ func (evm *EVM) create(gasCost uint64) error {
 	}
 
 	// Store the return data
-	returnDataSize := retSize.Value.Uint64()
-	returnData, err := calleeEVM.memory.load(retOffset.Value.Uint64(), returnDataSize)
+	retSizeValue, ok := retSize.Value.(*big.Int)
+	if !ok {
+		return errors.New("compareOperation assertion failed")
+	}
+	retOffsetValue, ok := retOffset.Value.(*big.Int)
+	if !ok {
+		return errors.New("compareOperation assertion failed")
+	}
+	returnDataSize := retSizeValue.Uint64()
+	returnData, err := calleeEVM.memory.load(retOffsetValue.Uint64(), returnDataSize)
 	if err != nil {
 		return err
 	}
@@ -467,7 +551,16 @@ func (evm *EVM) returnOp(gasCost uint64) error {
 	if err != nil {
 		return err
 	}
-	data, err := evm.memory.load(offset.Value.Uint64(), size.Value.Uint64())
+
+	offsetValue, ok := offset.Value.(*big.Int)
+	if !ok {
+		return errors.New("compareOperation assertion failed")
+	}
+	sizeValue, ok := size.Value.(*big.Int)
+	if !ok {
+		return errors.New("compareOperation assertion failed")
+	}
+	data, err := evm.memory.load(offsetValue.Uint64(), sizeValue.Uint64())
 	if err != nil {
 		return err
 	}
@@ -487,7 +580,16 @@ func (evm *EVM) revert(gasCost uint64) error {
 	if err != nil {
 		return err
 	}
-	data, err := evm.memory.load(offset.Value.Uint64(), size.Value.Uint64())
+
+	offsetValue, ok := offset.Value.(*big.Int)
+	if !ok {
+		return errors.New("compareOperation assertion failed")
+	}
+	sizeValue, ok := size.Value.(*big.Int)
+	if !ok {
+		return errors.New("compareOperation assertion failed")
+	}
+	data, err := evm.memory.load(offsetValue.Uint64(), sizeValue.Uint64())
 	if err != nil {
 		return err
 	}
@@ -523,8 +625,8 @@ func main() {
 	code := []byte{
 		0x60, 0x0a, // PUSH1 0x0a
 		0x60, 0x14, // PUSH1 0x14
-		0x01,       // ADD
-		0x00,       // STOP
+		0x01, // ADD
+		0x00, // STOP
 	}
 
 	contract := &Contract{
@@ -536,8 +638,9 @@ func main() {
 	evm.contract = contract
 
 	for evm.pc < uint64(len(contract.Code)) {
+		fmt.Printf("%v\n", contract.Code[evm.pc])
 		if err := evm.ExecuteOpcode(contract.Code[evm.pc]); err != nil {
-			fmt.Println("Error:", err)
+			fmt.Println("Error:", err.Error())
 			break
 		}
 		evm.pc++
